@@ -1,0 +1,3 @@
+{
+  "systemPrompt": "Follow the rules in .cursor/context.md by default. Keep changes minimal and focused. Do not rewrite full files unless necessary. Only load other .cursor/*.md files when explicitly relevant."
+}
