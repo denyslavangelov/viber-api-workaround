@@ -14,6 +14,72 @@ public struct WinRect {
   public int Bottom;
 }
 
+public static class WindowStealer {
+  const int SW_RESTORE = 9;
+  const int SW_SHOW = 5;
+  static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+  static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+  const uint SWP_NOMOVE = 0x0002;
+  const uint SWP_NOSIZE = 0x0001;
+  const uint SWP_SHOWWINDOW = 0x0040;
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+  [DllImport("kernel32.dll")]
+  public static extern uint GetCurrentThreadId();
+
+  [DllImport("user32.dll")]
+  public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+  [DllImport("user32.dll")]
+  public static extern bool BringWindowToTop(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+  [DllImport("user32.dll")]
+  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+  public static void ForceToForeground(IntPtr hwnd) {
+    if (hwnd == IntPtr.Zero) {
+      return;
+    }
+    IntPtr fg = GetForegroundWindow();
+    uint pidIgnored;
+    uint targetTid = GetWindowThreadProcessId(hwnd, out pidIgnored);
+    uint curTid = GetCurrentThreadId();
+    uint fgTid = 0;
+    if (fg != IntPtr.Zero) {
+      fgTid = GetWindowThreadProcessId(fg, out pidIgnored);
+    }
+    if (fg != IntPtr.Zero && fgTid != 0 && fgTid != targetTid) {
+      AttachThreadInput(fgTid, curTid, true);
+    }
+    if (targetTid != 0 && targetTid != curTid) {
+      AttachThreadInput(curTid, targetTid, true);
+    }
+    ShowWindow(hwnd, SW_RESTORE);
+    ShowWindow(hwnd, SW_SHOW);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    BringWindowToTop(hwnd);
+    SetForegroundWindow(hwnd);
+    if (targetTid != 0 && targetTid != curTid) {
+      AttachThreadInput(curTid, targetTid, false);
+    }
+    if (fg != IntPtr.Zero && fgTid != 0 && fgTid != targetTid) {
+      AttachThreadInput(fgTid, curTid, false);
+    }
+  }
+}
+
 public static class ViberUi {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -74,7 +140,7 @@ foreach ($hwnd in $hwnds) {
   $w = $rc.Right - $rc.Left
   $h = $rc.Bottom - $rc.Top
   if ($w -ge 200 -and $h -ge 200 -and [ViberUi]::IsWindowVisible($hwnd)) {
-    [void][ViberUi]::SetForegroundWindow($hwnd)
+    [WindowStealer]::ForceToForeground($hwnd)
     exit 0
   }
 }
@@ -82,7 +148,7 @@ foreach ($hwnd in $hwnds) {
 foreach ($p in $procs) {
   if ($p.MainWindowHandle -ne [IntPtr]::Zero) {
     [void][ViberUi]::ShowWindow($p.MainWindowHandle, 9)
-    [void][ViberUi]::SetForegroundWindow($p.MainWindowHandle)
+    [WindowStealer]::ForceToForeground($p.MainWindowHandle)
     exit 0
   }
 }

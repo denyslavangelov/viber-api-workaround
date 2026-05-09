@@ -37,6 +37,56 @@ except ImportError:
     _keyboard_send_keys = None
 
 
+def force_foreground_win32(hwnd: int) -> None:
+    """Raise Viber above other windows: AttachThreadInput + brief TOPMOST + BringWindowToTop."""
+    if sys.platform != "win32" or not hwnd:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    SW_RESTORE = 9
+    SW_SHOW = 5
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_SHOWWINDOW = 0x0040
+
+    h = wintypes.HWND(hwnd)
+    fg = user32.GetForegroundWindow()
+    cur_tid = kernel32.GetCurrentThreadId()
+    pid_dummy = wintypes.DWORD()
+    target_tid = user32.GetWindowThreadProcessId(h, ctypes.byref(pid_dummy))
+
+    fg_tid_val = 0
+    if fg:
+        pd = wintypes.DWORD()
+        fg_tid_val = user32.GetWindowThreadProcessId(fg, ctypes.byref(pd))
+
+    if fg and fg_tid_val and fg_tid_val != target_tid:
+        user32.AttachThreadInput(fg_tid_val, cur_tid, True)
+    if target_tid and target_tid != cur_tid:
+        user32.AttachThreadInput(cur_tid, target_tid, True)
+
+    user32.ShowWindow(h, SW_RESTORE)
+    user32.ShowWindow(h, SW_SHOW)
+    user32.SetWindowPos(h, wintypes.HWND(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+    user32.SetWindowPos(h, wintypes.HWND(-2), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+    user32.BringWindowToTop(h)
+    user32.SetForegroundWindow(h)
+
+    if target_tid and target_tid != cur_tid:
+        user32.AttachThreadInput(cur_tid, target_tid, False)
+    if fg and fg_tid_val and fg_tid_val != target_tid:
+        user32.AttachThreadInput(fg_tid_val, cur_tid, False)
+
+
+def _force_dlg_foreground(dlg) -> None:
+    hwnd = getattr(dlg, "handle", None) or getattr(dlg, "handle_id", None)
+    if hwnd:
+        force_foreground_win32(int(hwnd))
+
+
 def _digits_only(phone_number: str) -> str:
     return "".join(c for c in phone_number if c.isdigit())
 
@@ -77,6 +127,7 @@ def connect_to_viber_window():
                         dlg.set_focus()
                     except Exception:
                         pass
+                    _force_dlg_foreground(dlg)
                     time.sleep(0.12)
                     rect = dlg.rectangle()
                     left = int(rect.left)
@@ -97,6 +148,7 @@ def connect_to_viber_window():
                 dlg.set_focus()
             except Exception:
                 pass
+            _force_dlg_foreground(dlg)
             time.sleep(0.12)
             rect = dlg.rectangle()
             left = int(rect.left)
@@ -124,6 +176,7 @@ def _auto_id(ctrl) -> str:
 def _send_message_via_uia(hwnd: int, message: str) -> str | None:
     """UIA: QQuickTextEdit Edit + SendToolbarButton (from viber-checker)."""
     try:
+        force_foreground_win32(hwnd)
         time.sleep(1.5)
         app_uia = Application(backend="uia").connect(handle=hwnd)
         dlg = app_uia.window(handle=hwnd)
@@ -198,9 +251,12 @@ def do_viber_send_message(phone_number: str, message: str) -> str | None:
         dlg.set_focus()
     except Exception:
         pass
+    _force_dlg_foreground(dlg)
     time.sleep(MESSAGE_INPUT_WAIT)
 
     hwnd = getattr(dlg, "handle", None) or getattr(dlg, "handle_id", None)
+    if hwnd:
+        force_foreground_win32(int(hwnd))
     sent = False
     uia_error = None
 
@@ -212,14 +268,9 @@ def do_viber_send_message(phone_number: str, message: str) -> str | None:
             uia_error = err_uia
 
     if not sent and _keyboard_send_keys is not None:
-        try:
-            import win32gui
-
-            if hwnd:
-                win32gui.SetForegroundWindow(hwnd)
-                time.sleep(0.2)
-        except Exception:
-            pass
+        if hwnd:
+            force_foreground_win32(int(hwnd))
+            time.sleep(0.2)
         safe = msg.replace("{", "{{").replace("}", "}}")
         for attempt in range(2):
             try:
@@ -234,13 +285,8 @@ def do_viber_send_message(phone_number: str, message: str) -> str | None:
                         "Keep session unlocked or fix UIA tree."
                     ) % (uia_error or "unknown")
                 if attempt == 0 and hwnd:
-                    try:
-                        import win32gui
-
-                        win32gui.SetForegroundWindow(hwnd)
-                        time.sleep(0.5)
-                    except Exception:
-                        pass
+                    force_foreground_win32(int(hwnd))
+                    time.sleep(0.5)
                     continue
                 return "Failed to type/send: %s" % err_msg
     elif not sent:
