@@ -80,6 +80,54 @@ function normalizePhoneNumber(rawPhone) {
   return String(rawPhone || "").replace(/[^\d+]/g, "");
 }
 
+function buildViberChatLink(phoneNumber) {
+  const phone = normalizePhoneNumber(phoneNumber);
+  if (!phone) {
+    return null;
+  }
+  const digitsOnly = phone.replace(/[^\d]/g, "");
+  const plusPhone = phone.startsWith("+") ? phone : `+${digitsOnly}`;
+  return `viber://chat?number=${encodeURIComponent(plusPhone)}`;
+}
+
+async function maybeLaunchViberExe() {
+  const exe = process.env.VIBER_EXE_PATH?.trim();
+  if (!exe || process.platform !== "win32") {
+    return;
+  }
+  appendApiLog("launching Viber via VIBER_EXE_PATH (helps when viber:// alone does nothing on VMs)");
+  try {
+    await execFileAsync("cmd.exe", ["/c", "start", "", exe], { windowsHide: true });
+  } catch (error) {
+    appendApiLog(`VIBER_EXE_PATH launch failed: ${error.message || error}`);
+  }
+  await sleep(Number(process.env.VIBER_EXE_WARMUP_MS || 3500));
+}
+
+async function waitForViberVisibleWindow(timeoutMs) {
+  const ms = Math.min(Math.max(Number(timeoutMs) || 45000, 2000), 120000);
+  const ps = `$deadline = [DateTime]::UtcNow.AddMilliseconds(${ms})
+while ([DateTime]::UtcNow -lt $deadline) {
+  $p = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '(?i)viber' -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+  if ($null -ne $p) { exit 0 }
+  Start-Sleep -Milliseconds 400
+}
+exit 1`;
+  try {
+    await execFileAsync("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      ps,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function closeViberProcess() {
   try {
     await execFileAsync("powershell", [
@@ -96,14 +144,10 @@ async function closeViberProcess() {
 }
 
 async function openViberChatByPhone(phoneNumber) {
-  const phone = normalizePhoneNumber(phoneNumber);
-  if (!phone) {
+  const link = buildViberChatLink(phoneNumber);
+  if (!link) {
     return null;
   }
-
-  const digitsOnly = phone.replace(/[^\d]/g, "");
-  const plusPhone = phone.startsWith("+") ? phone : `+${digitsOnly}`;
-  const link = `viber://chat?number=${encodeURIComponent(plusPhone)}`;
   try {
     // Launch the protocol handler from a hidden PowerShell process.
     await execFileAsync("powershell", [
@@ -193,7 +237,9 @@ async function restartOpenAndSend(phoneNumber, message) {
   }
 
   await closeViberProcess();
-  await sleep(1000);
+  await sleep(Number(process.env.VIBER_POST_KILL_DELAY_MS || 2000));
+
+  await maybeLaunchViberExe();
 
   const openedLink = await openViberChatByPhone(phone);
   if (!openedLink) {
@@ -203,8 +249,29 @@ async function restartOpenAndSend(phoneNumber, message) {
     };
   }
 
-  await sleep(2800);
-  await sleep(1500);
+  const waitMs = Number(process.env.VIBER_WAIT_WINDOW_MS || 45000);
+  appendApiLog(`waiting for Viber window (up to ${waitMs} ms); VMs/RDP may be slow`);
+  let windowReady = await waitForViberVisibleWindow(waitMs);
+  if (!windowReady) {
+    appendApiLog("no Viber window yet; retrying deeplink via Electron shell.openExternal");
+    try {
+      await shell.openExternal(openedLink.detail);
+      await sleep(1500);
+      windowReady = await waitForViberVisibleWindow(Math.min(20000, waitMs));
+    } catch {
+      windowReady = false;
+    }
+  }
+  if (!windowReady) {
+    return {
+      ok: false,
+      message:
+        "Viber did not open a visible window after the deeplink. On a VM: use an interactive RDP session (not console), install Viber for this user, set VIBER_EXE_PATH to Viber.exe, and/or increase VIBER_WAIT_WINDOW_MS.",
+    };
+  }
+  appendApiLog("Viber window detected; proceeding to send");
+
+  await sleep(Number(process.env.VIBER_AFTER_OPEN_DELAY_MS || 4300));
 
   const sendResult = await sendMessageToViber(message.trim(), { skipEnter: false });
   if (!sendResult.ok) {
