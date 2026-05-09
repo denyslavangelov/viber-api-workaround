@@ -86,8 +86,78 @@ function buildViberChatLink(phoneNumber) {
     return null;
   }
   const digitsOnly = phone.replace(/[^\d]/g, "");
-  const plusPhone = phone.startsWith("+") ? phone : `+${digitsOnly}`;
-  return `viber://chat?number=${encodeURIComponent(plusPhone)}`;
+  if (!digitsOnly) {
+    return null;
+  }
+  // Same URI shape as viber-checker (digits only, no "+" in query)
+  return `viber://chat?number=${digitsOnly}`;
+}
+
+async function resolvePythonExecutable() {
+  const custom = process.env.VIBER_PYTHON?.trim();
+  if (custom) {
+    return custom;
+  }
+  try {
+    await execFileAsync("python", ["--version"], { windowsHide: true });
+    return "python";
+  } catch {
+    /* continue */
+  }
+  try {
+    await execFileAsync("py", ["-3", "--version"], { windowsHide: true });
+    return "py";
+  } catch {
+    return null;
+  }
+}
+
+async function canUsePythonViberAgent() {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const py = await resolvePythonExecutable();
+  if (!py) {
+    return false;
+  }
+  const script = path.join(__dirname, "scripts", "viber_send_agent.py");
+  const probeArgs = py === "py" ? ["-3", script, "--probe"] : [script, "--probe"];
+  try {
+    await execFileAsync(py, probeArgs, { windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runPythonViberSend(phoneNumber, messageText) {
+  const py = await resolvePythonExecutable();
+  if (!py) {
+    throw new Error("Python not found (install Python 3 and pip install -r electron/scripts/requirements-viber-agent.txt)");
+  }
+  const script = path.join(__dirname, "scripts", "viber_send_agent.py");
+  const args =
+    py === "py"
+      ? ["-3", script, "--phone", phoneNumber, "--message", messageText]
+      : [script, "--phone", phoneNumber, "--message", messageText];
+  const { stdout } = await execFileAsync(py, args, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true,
+  });
+  const line = stdout
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .pop();
+  if (!line) {
+    throw new Error("Python agent returned no output");
+  }
+  const data = JSON.parse(line);
+  if (!data.ok) {
+    throw new Error(data.error || "Python agent failed");
+  }
+  return data;
 }
 
 async function maybeLaunchViberExe() {
@@ -146,24 +216,24 @@ async function openViberChatByPhone(phoneNumber) {
     return null;
   }
   try {
-    // Launch the protocol handler from a hidden PowerShell process.
-    await execFileAsync("powershell", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-WindowStyle",
-      "Hidden",
-      "-Command",
-      `Start-Process "${link}" -WindowStyle Hidden`,
-    ]);
+    // Prefer shell.openExternal — closest to viber-checker's os.startfile on Windows
+    await shell.openExternal(link);
     await sleep(1200);
-    return { method: "hidden-protocol", detail: link };
+    return { method: "startfile-like", detail: link };
   } catch {
     try {
-      await shell.openExternal(link);
-      await sleep(800);
-      return { method: "deeplink", detail: link };
+      await execFileAsync("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        `Start-Process "${link}" -WindowStyle Hidden`,
+      ]);
+      await sleep(1200);
+      return { method: "powershell", detail: link };
     } catch {
       return null;
     }
@@ -233,8 +303,39 @@ async function restartOpenAndSend(phoneNumber, message) {
     };
   }
 
-  await closeViberProcess();
-  await sleep(Number(process.env.VIBER_POST_KILL_DELAY_MS || 2000));
+  const pyMode = process.env.VIBER_PYTHON_AGENT;
+  if (process.platform === "win32" && pyMode !== "0") {
+    const forcePython = pyMode === "1";
+    const probed = await canUsePythonViberAgent();
+    if (forcePython || probed) {
+      try {
+        appendApiLog(
+          forcePython
+            ? "send path: Python viber_send_agent.py (forced VIBER_PYTHON_AGENT=1)"
+            : "send path: Python viber_send_agent.py (same stack as viber-checker: pywinauto + UIA)",
+        );
+        await runPythonViberSend(phoneNumber, message.trim());
+        return {
+          ok: true,
+          message: "Sent via Python/pywinauto (viber-checker style).",
+        };
+      } catch (error) {
+        appendApiLog(`Python agent failed: ${error.message}`);
+        if (forcePython) {
+          return {
+            ok: false,
+            message: `Python agent required but failed: ${error.message}`,
+          };
+        }
+        appendApiLog("falling back to PowerShell clipboard automation");
+      }
+    }
+  }
+
+  if (process.env.VIBER_KILL_BEFORE_SEND === "1") {
+    await closeViberProcess();
+    await sleep(Number(process.env.VIBER_POST_KILL_DELAY_MS || 2000));
+  }
 
   await maybeLaunchViberExe();
 
@@ -250,7 +351,7 @@ async function restartOpenAndSend(phoneNumber, message) {
   appendApiLog(`waiting for Viber window (up to ${waitMs} ms); VMs/RDP may be slow`);
   let windowReady = await waitForViberVisibleWindow(waitMs);
   if (!windowReady) {
-    appendApiLog("no Viber window yet; retrying deeplink via Electron shell.openExternal");
+    appendApiLog("no Viber window yet; retrying deeplink");
     try {
       await shell.openExternal(openedLink.detail);
       await sleep(1500);
@@ -263,7 +364,7 @@ async function restartOpenAndSend(phoneNumber, message) {
     return {
       ok: false,
       message:
-        "Viber had no usable main window (often tray-only). On a VM: stay logged in via RDP, set VIBER_EXE_PATH, disable 'close to tray' if Viber offers it, or increase VIBER_WAIT_WINDOW_MS.",
+        "Viber had no usable main window (often tray-only). Install Python deps (see electron/scripts/requirements-viber-agent.txt) for pywinauto mode, or set VIBER_KILL_BEFORE_SEND=1 / VIBER_EXE_PATH.",
     };
   }
   appendApiLog("Viber window detected; proceeding to send");
@@ -278,12 +379,8 @@ async function restartOpenAndSend(phoneNumber, message) {
   return {
     ok: true,
     message: openedLink
-      ? openedLink.method === "hidden-protocol"
-        ? `Opened by hidden protocol launch: ${openedLink.detail}. Message pasted and sent.`
-        : openedLink.method === "deeplink"
-        ? `Opened by deeplink: ${openedLink.detail}. Message pasted and sent.`
-        : `Opened chat: ${openedLink.detail}. Message pasted and sent.`
-      : "Could not confirm opening chat by number. Message pasted and sent.",
+      ? `Opened chat (${openedLink.method}): ${openedLink.detail}. Message pasted and sent.`
+      : "Message pasted and sent.",
   };
 }
 

@@ -10,7 +10,8 @@
     "lint": "eslint",
     "electron:start": "electron ./electron/main.js",
     "electron:start:tunnel": "cross-env CLOUDFLARE_TUNNEL_ENABLED=true electron ./electron/main.js",
-    "electron:dist:win": "electron-builder --win nsis"
+    "electron:dist:win": "electron-builder --win nsis",
+    "viber-agent:install": "pip install -r electron/scripts/requirements-viber-agent.txt"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
