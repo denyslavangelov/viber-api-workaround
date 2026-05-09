@@ -5,6 +5,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$restoreScript = Join-Path $PSScriptRoot "restore-viber-window.ps1"
+if (Test-Path $restoreScript) {
+  try {
+    & $restoreScript | Out-Null
+  } catch {
+    # Tray-only / no HWND yet; continue — send-viber may still fail clearly.
+  }
+  Start-Sleep -Milliseconds 350
+}
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;

@@ -105,27 +105,24 @@ async function maybeLaunchViberExe() {
 }
 
 async function waitForViberVisibleWindow(timeoutMs) {
-  const ms = Math.min(Math.max(Number(timeoutMs) || 45000, 2000), 120000);
-  const ps = `$deadline = [DateTime]::UtcNow.AddMilliseconds(${ms})
-while ([DateTime]::UtcNow -lt $deadline) {
-  $p = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '(?i)viber' -and $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
-  if ($null -ne $p) { exit 0 }
-  Start-Sleep -Milliseconds 400
-}
-exit 1`;
-  try {
-    await execFileAsync("powershell", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      ps,
-    ]);
-    return true;
-  } catch {
-    return false;
+  const restoreScript = path.join(__dirname, "scripts", "restore-viber-window.ps1");
+  const deadline = Date.now() + Math.min(Math.max(Number(timeoutMs) || 45000, 2000), 120000);
+  while (Date.now() < deadline) {
+    try {
+      await execFileAsync("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        restoreScript,
+      ]);
+      return true;
+    } catch {
+      await sleep(450);
+    }
   }
+  return false;
 }
 
 async function closeViberProcess() {
@@ -266,7 +263,7 @@ async function restartOpenAndSend(phoneNumber, message) {
     return {
       ok: false,
       message:
-        "Viber did not open a visible window after the deeplink. On a VM: use an interactive RDP session (not console), install Viber for this user, set VIBER_EXE_PATH to Viber.exe, and/or increase VIBER_WAIT_WINDOW_MS.",
+        "Viber had no usable main window (often tray-only). On a VM: stay logged in via RDP, set VIBER_EXE_PATH, disable 'close to tray' if Viber offers it, or increase VIBER_WAIT_WINDOW_MS.",
     };
   }
   appendApiLog("Viber window detected; proceeding to send");
