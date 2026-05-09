@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Viber Desktop Sender</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        font-family: Inter, Segoe UI, Arial, Helvetica, sans-serif;
+        background: radial-gradient(circle at top, #1f2937 0%, #0b1220 55%, #070b14 100%);
+        color: #e5e7eb;
+      }
+
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .card {
+        background: rgba(17, 24, 39, 0.85);
+        border: 1px solid #253248;
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        color: #f9fafb;
+      }
+
+      p {
+        margin: 0;
+        color: #9fb0c7;
+        line-height: 1.4;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+        border-radius: 10px;
+        border: 1px solid #334155;
+        padding: 10px;
+        font-size: 14px;
+        background: #0f172a;
+        color: #e5e7eb;
+      }
+
+      input {
+        border-radius: 10px;
+        border: 1px solid #334155;
+        padding: 10px;
+        font-size: 14px;
+        background: #0f172a;
+        color: #e5e7eb;
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+      }
+
+      button {
+        cursor: pointer;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 700;
+        color: #0b1020;
+        background: linear-gradient(120deg, #34d399, #22d3ee);
+      }
+
+      #status {
+        min-height: 24px;
+        font-size: 12px;
+      }
+
+      .log-title {
+        margin: 0 0 8px;
+        font-size: 14px;
+        color: #bfdbfe;
+      }
+
+      #logs {
+        margin: 0;
+        padding: 10px;
+        list-style: none;
+        border: 1px solid #2b3a55;
+        border-radius: 10px;
+        background: #0b1324;
+        min-height: 180px;
+        max-height: 260px;
+        overflow: auto;
+        font-size: 12px;
+        font-family: Consolas, "Courier New", monospace;
+      }
+
+      #logs li {
+        padding: 4px 0;
+        border-bottom: 1px dashed #23324a;
+        color: #c7d2fe;
+      }
+
+      #logs li:last-child {
+        border-bottom: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Viber Auto Sender</h1>
+        <p>One click flow: restart Viber, open chat by phone, and paste message (debug mode).</p>
+
+        <input id="phone" placeholder="+380XXXXXXXXX" />
+        <div style="height: 10px"></div>
+        <textarea id="message" placeholder="Type message here"></textarea>
+        <div style="height: 10px"></div>
+        <div class="row">
+          <button id="run">Restart Viber + Send</button>
+        </div>
+        <div id="status"></div>
+      </div>
+
+      <div class="card">
+        <p class="log-title">API Logs</p>
+        <ul id="logs"></ul>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const messageEl = document.getElementById("message");
+      const phoneEl = document.getElementById("phone");
+      const logsEl = document.getElementById("logs");
+      const seenLogs = new Set();
+
+      function setStatus(text, ok = true) {
+        statusEl.textContent = text;
+        statusEl.style.color = ok ? "#6ee7b7" : "#fca5a5";
+      }
+
+      function appendLog(entry) {
+        const key = `${entry.ts}|${entry.message}`;
+        if (seenLogs.has(key)) {
+          return;
+        }
+        seenLogs.add(key);
+
+        const li = document.createElement("li");
+        const ts = new Date(entry.ts).toLocaleTimeString();
+        li.textContent = `[${ts}] ${entry.message}`;
+        logsEl.appendChild(li);
+
+        while (logsEl.children.length > 250) {
+          logsEl.removeChild(logsEl.firstChild);
+        }
+
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+
+      async function run(action) {
+        const result = await action();
+        setStatus(result.message, result.ok);
+      }
+
+      document.getElementById("run").addEventListener("click", async () => {
+        const phoneNumber = phoneEl.value;
+        const message = messageEl.value;
+        await run(() => window.viberDesktop.restartOpenAndSend(phoneNumber, message));
+      });
+
+      async function bootstrapLogs() {
+        const entries = await window.viberDesktop.getLogs();
+        entries.forEach(appendLog);
+      }
+
+      bootstrapLogs();
+
+      window.viberDesktop.onLog((entry) => {
+        appendLog(entry);
+      });
+    </script>
+  </body>
+</html>

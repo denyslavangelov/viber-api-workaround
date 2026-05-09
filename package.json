@@ -2,13 +2,20 @@
   "name": "viber-api-workaround",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:start": "electron ./electron/main.js",
+    "electron:start:tunnel": "cross-env CLOUDFLARE_TUNNEL_ENABLED=true electron ./electron/main.js",
+    "electron:dist:win": "electron-builder --win nsis",
+    "electron:dist:linux": "electron-builder --linux",
+    "electron:dist:all": "electron-builder --win nsis --linux"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3"
@@ -19,9 +26,56 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
+    "cross-env": "^10.1.0",
+    "electron": "^42.0.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "build": {
+    "appId": "com.viberworkaround.desktop",
+    "productName": "Viber Desktop Sender",
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Utility",
+      "synopsis": "Viber Desktop automation and HTTP API helper",
+      "maintainer": "viber-api-workaround"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }
