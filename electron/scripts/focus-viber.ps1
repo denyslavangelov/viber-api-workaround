@@ -112,9 +112,12 @@ public static class NativeMethods {
 }
 "@
 
-$process = Get-Process | Where-Object { $_.ProcessName -match "(?i)viber" -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+# Rakuten Viber only — ProcessName is "Viber". Do not match this Electron app ("Viber Desktop Sender", etc.).
+$process = Get-Process -ErrorAction SilentlyContinue |
+  Where-Object { $_.ProcessName -eq "Viber" -and $_.MainWindowHandle -ne [IntPtr]::Zero } |
+  Select-Object -First 1
 if (-not $process) {
-  throw "Viber process with visible window not found."
+  throw "Viber desktop (process name Viber.exe) with visible window not found."
 }
 
 $h = $process.MainWindowHandle

@@ -87,6 +87,33 @@ def _force_dlg_foreground(dlg) -> None:
         force_foreground_win32(int(hwnd))
 
 
+def _window_title_hwnd(hwnd: int) -> str:
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.windll.user32.GetWindowTextW(int(hwnd), buf, 512)
+    return buf.value or ""
+
+
+def _pick_viber_win32_handle(handles: list) -> int | None:
+    """find_windows('.*Viber.*') also matches our Electron UI ('Viber Desktop Sender'). Skip it."""
+    for h in handles:
+        try:
+            if "Desktop Sender" in _window_title_hwnd(int(h)):
+                continue
+        except Exception:
+            pass
+        return int(h)
+    return None
+
+
+def _dlg_is_rakuten_viber(dlg) -> bool:
+    try:
+        return "Desktop Sender" not in (dlg.window_text() or "")
+    except Exception:
+        return True
+
+
 def _digits_only(phone_number: str) -> str:
     return "".join(c for c in phone_number if c.isdigit())
 
@@ -119,9 +146,10 @@ def connect_to_viber_window():
         try:
             if findwindows is not None:
                 handles = findwindows.find_windows(title_re=".*Viber.*")
-                if handles:
-                    app = Application(backend="win32").connect(handle=handles[0])
-                    dlg = app.window(handle=handles[0])
+                hwnd = _pick_viber_win32_handle(handles)
+                if hwnd is not None:
+                    app = Application(backend="win32").connect(handle=hwnd)
+                    dlg = app.window(handle=hwnd)
                     try:
                         dlg.restore()
                         dlg.set_focus()
@@ -138,11 +166,22 @@ def connect_to_viber_window():
                         rect_dict = {"left": left, "top": top, "width": width, "height": height}
                         return app, rect_dict, None
 
+            app = None
+            dlg = None
             try:
-                app = Application(backend="uia").connect(title_re=".*Viber.*", timeout=CONNECT_TIMEOUT)
-            except Exception:
                 app = Application(backend="uia").connect(path=VIBER_EXE, timeout=CONNECT_TIMEOUT)
-            dlg = app.top_window()
+                dlg = app.top_window()
+            except Exception:
+                pass
+            if dlg is None or not _dlg_is_rakuten_viber(dlg):
+                try:
+                    app = Application(backend="uia").connect(title_re=".*Viber.*", timeout=CONNECT_TIMEOUT)
+                    dlg = app.top_window()
+                except Exception:
+                    dlg = None
+            if dlg is None or not _dlg_is_rakuten_viber(dlg):
+                time.sleep(WINDOW_POLL_INTERVAL)
+                continue
             try:
                 dlg.restore()
                 dlg.set_focus()

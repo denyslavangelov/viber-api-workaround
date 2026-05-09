@@ -197,16 +197,23 @@ async function waitForViberVisibleWindow(timeoutMs) {
 
 async function closeViberProcess() {
   try {
+    // Only Rakuten Viber desktop (Viber.exe), never this Electron app ("Viber Desktop Sender", electron).
     await execFileAsync("powershell", [
       "-NoProfile",
       "-NonInteractive",
       "-ExecutionPolicy",
       "Bypass",
       "-Command",
-      "Get-Process | Where-Object { $_.ProcessName -match '(?i)viber' } | Stop-Process -Force -ErrorAction SilentlyContinue",
+      "Get-Process -Name 'Viber' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
     ]);
   } catch {
     // Ignore close errors; process may not be running.
+  }
+}
+
+function minimizeAutomationChrome() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.minimize();
   }
 }
 
@@ -303,6 +310,8 @@ async function restartOpenAndSend(phoneNumber, message) {
     };
   }
 
+  minimizeAutomationChrome();
+
   const pyMode = process.env.VIBER_PYTHON_AGENT;
   if (process.platform === "win32" && pyMode !== "0") {
     const forcePython = pyMode === "1";
@@ -314,6 +323,7 @@ async function restartOpenAndSend(phoneNumber, message) {
             ? "send path: Python viber_send_agent.py (forced VIBER_PYTHON_AGENT=1)"
             : "send path: Python viber_send_agent.py (same stack as viber-checker: pywinauto + UIA)",
         );
+        minimizeAutomationChrome();
         await runPythonViberSend(phoneNumber, message.trim());
         return {
           ok: true,
@@ -331,6 +341,8 @@ async function restartOpenAndSend(phoneNumber, message) {
       }
     }
   }
+
+  minimizeAutomationChrome();
 
   if (process.env.VIBER_KILL_BEFORE_SEND === "1") {
     await closeViberProcess();

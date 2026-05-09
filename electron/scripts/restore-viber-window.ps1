@@ -117,7 +117,8 @@ public static class ViberUi {
 }
 "@
 
-$procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "(?i)viber" })
+# Only Rakuten Viber (Viber.exe). Ignore Electron helper ("Viber Desktop Sender").
+$procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -eq "Viber" })
 if ($procs.Count -eq 0) {
   exit 1
 }
