@@ -10,9 +10,7 @@
     "lint": "eslint",
     "electron:start": "electron ./electron/main.js",
     "electron:start:tunnel": "cross-env CLOUDFLARE_TUNNEL_ENABLED=true electron ./electron/main.js",
-    "electron:dist:win": "electron-builder --win nsis",
-    "electron:dist:linux": "electron-builder --linux",
-    "electron:dist:all": "electron-builder --win nsis --linux"
+    "electron:dist:win": "electron-builder --win nsis"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -51,25 +49,6 @@
           ]
         }
       ]
-    },
-    "linux": {
-      "target": [
-        {
-          "target": "AppImage",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "category": "Utility",
-      "synopsis": "Viber Desktop automation and HTTP API helper",
-      "maintainer": "viber-api-workaround"
     },
     "nsis": {
       "oneClick": false,

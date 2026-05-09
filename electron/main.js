@@ -6,8 +6,31 @@ const { execFile, spawn } = require("node:child_process");
 const { promisify } = require("node:util");
 const dotenv = require("dotenv");
 
-dotenv.config({ path: path.join(process.cwd(), ".env") });
-dotenv.config({ path: path.join(process.cwd(), ".env.local"), override: true });
+function loadDotenvFiles() {
+  /** Packaged apps often have cwd != install dir; also load next to .exe and in userData. */
+  if (app.isPackaged) {
+    const nextToExe = path.dirname(process.execPath);
+    let userData = "";
+    try {
+      userData = app.getPath("userData");
+    } catch {
+      // ignore before paths are ready (rare)
+    }
+    const roots = [nextToExe, userData].filter(Boolean);
+    const files = [];
+    for (const root of roots) {
+      files.push(path.join(root, ".env"), path.join(root, ".env.local"));
+    }
+    for (const file of files) {
+      dotenv.config({ path: file, override: true });
+    }
+  } else {
+    dotenv.config({ path: path.join(process.cwd(), ".env") });
+    dotenv.config({ path: path.join(process.cwd(), ".env.local"), override: true });
+  }
+}
+
+loadDotenvFiles();
 
 let mainWindow = null;
 const execFileAsync = promisify(execFile);
@@ -57,29 +80,16 @@ function normalizePhoneNumber(rawPhone) {
   return String(rawPhone || "").replace(/[^\d+]/g, "");
 }
 
-const IS_WIN = process.platform === "win32";
-const IS_LINUX = process.platform === "linux";
-
 async function closeViberProcess() {
   try {
-    if (IS_WIN) {
-      await execFileAsync("powershell", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Get-Process | Where-Object { $_.ProcessName -match '(?i)viber' } | Stop-Process -Force -ErrorAction SilentlyContinue",
-      ]);
-      return;
-    }
-    if (IS_LINUX) {
-      await execFileAsync("bash", [
-        "-lc",
-        "for n in Viber viber; do killall -q \"$n\" 2>/dev/null && exit 0; done; exit 0",
-      ]);
-      return;
-    }
+    await execFileAsync("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "Get-Process | Where-Object { $_.ProcessName -match '(?i)viber' } | Stop-Process -Force -ErrorAction SilentlyContinue",
+    ]);
   } catch {
     // Ignore close errors; process may not be running.
   }
@@ -95,28 +105,19 @@ async function openViberChatByPhone(phoneNumber) {
   const plusPhone = phone.startsWith("+") ? phone : `+${digitsOnly}`;
   const link = `viber://chat?number=${encodeURIComponent(plusPhone)}`;
   try {
-    if (IS_WIN) {
-      await execFileAsync("powershell", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-Command",
-        `Start-Process "${link}" -WindowStyle Hidden`,
-      ]);
-      await sleep(1200);
-      return { method: "hidden-protocol", detail: link };
-    }
-    if (IS_LINUX) {
-      await execFileAsync("xdg-open", [link]);
-      await sleep(1200);
-      return { method: "xdg-open", detail: link };
-    }
-    await shell.openExternal(link);
-    await sleep(800);
-    return { method: "deeplink", detail: link };
+    // Launch the protocol handler from a hidden PowerShell process.
+    await execFileAsync("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-WindowStyle",
+      "Hidden",
+      "-Command",
+      `Start-Process "${link}" -WindowStyle Hidden`,
+    ]);
+    await sleep(1200);
+    return { method: "hidden-protocol", detail: link };
   } catch {
     try {
       await shell.openExternal(link);
@@ -145,45 +146,25 @@ async function sendMessageToViber(message, options = {}) {
       mainWindow.minimize();
     }
 
-    if (IS_WIN) {
-      await execFileAsync("powershell", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        path.join(__dirname, "scripts", "send-viber.ps1"),
-        "-Message",
-        message.trim(),
-        "-InputOffsetBottom",
-        String(inputOffsetBottom),
-        "-InputXPercent",
-        String(inputXPercent),
-        ...(skipEnter ? ["-SkipEnter"] : []),
-      ]);
-    } else if (IS_LINUX) {
-      await execFileAsync("bash", [
-        path.join(__dirname, "scripts", "send-viber.sh"),
-        message.trim(),
-        skipEnter ? "1" : "0",
-        String(inputOffsetBottom),
-        String(inputXPercent),
-      ]);
-    } else {
-      return {
-        ok: false,
-        message: "Sending from the desktop UI is only supported on Windows and Linux.",
-      };
-    }
+    await execFileAsync("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(__dirname, "scripts", "send-viber.ps1"),
+      "-Message",
+      message.trim(),
+      "-InputOffsetBottom",
+      String(inputOffsetBottom),
+      "-InputXPercent",
+      String(inputXPercent),
+      ...(skipEnter ? ["-SkipEnter"] : []),
+    ]);
   } catch (error) {
-    const detail =
-      error.stderr?.toString?.() ||
-      error.stdout?.toString?.() ||
-      error.message ||
-      "unknown error";
     return {
       ok: false,
-      message: `Failed to type/send: ${detail}`,
+      message: `Failed to type/send: ${error.stderr || "unknown error"}`,
     };
   }
 
@@ -235,8 +216,6 @@ async function restartOpenAndSend(phoneNumber, message) {
     message: openedLink
       ? openedLink.method === "hidden-protocol"
         ? `Opened by hidden protocol launch: ${openedLink.detail}. Message pasted and sent.`
-        : openedLink.method === "xdg-open"
-        ? `Opened via xdg-open: ${openedLink.detail}. Message pasted and sent.`
         : openedLink.method === "deeplink"
         ? `Opened by deeplink: ${openedLink.detail}. Message pasted and sent.`
         : `Opened chat: ${openedLink.detail}. Message pasted and sent.`
