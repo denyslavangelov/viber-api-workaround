@@ -36,15 +36,27 @@ let mainWindow = null;
 const execFileAsync = promisify(execFile);
 let apiServer = null;
 let cloudflareProcess = null;
+/** Latest quick-tunnel HTTPS URL from cloudflared (trycloudflare.com), or null */
+let publicTunnelUrl = null;
 let lastJobId = 0;
 let messageQueue = Promise.resolve();
 const apiLogs = [];
 const maxApiLogs = 300;
 
+function publishPublicTunnelUrl(url) {
+  publicTunnelUrl = url;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("viber:tunnel-url", {
+      url,
+      tunnelEnabled: String(process.env.CLOUDFLARE_TUNNEL_ENABLED || "").toLowerCase() === "true",
+    });
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 520,
-    height: 500,
+    height: 640,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -53,6 +65,9 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  mainWindow.webContents.once("did-finish-load", () => {
+    publishPublicTunnelUrl(publicTunnelUrl);
+  });
 }
 
 function sleep(ms) {
@@ -575,6 +590,7 @@ function startCloudflareTunnel() {
       if (matches) {
         for (const url of matches) {
           appendApiLog(`public URL: ${url}`);
+          publishPublicTunnelUrl(url);
         }
       }
     }
@@ -590,6 +606,7 @@ function startCloudflareTunnel() {
   cloudflareProcess.on("close", (code) => {
     appendApiLog(`cloudflared exited with code ${code}`);
     cloudflareProcess = null;
+    publishPublicTunnelUrl(null);
   });
 }
 
@@ -602,6 +619,10 @@ app.whenReady().then(() => {
     restartOpenAndSend(phoneNumber, message),
   );
   ipcMain.handle("viber:get-logs", async () => apiLogs);
+  ipcMain.handle("viber:get-public-tunnel-url", async () => ({
+    url: publicTunnelUrl,
+    tunnelEnabled: String(process.env.CLOUDFLARE_TUNNEL_ENABLED || "").toLowerCase() === "true",
+  }));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

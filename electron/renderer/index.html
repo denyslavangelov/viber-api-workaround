@@ -80,6 +80,76 @@
         background: linear-gradient(120deg, #34d399, #22d3ee);
       }
 
+      button.btn-muted {
+        background: #334155;
+        color: #e2e8f0;
+        font-weight: 600;
+      }
+
+      button.btn-muted:hover {
+        background: #475569;
+      }
+
+      .tunnel-card {
+        border-color: #3d4f6f;
+        background: linear-gradient(145deg, rgba(30, 58, 95, 0.55) 0%, rgba(17, 24, 39, 0.9) 100%);
+      }
+
+      .tunnel-card h2 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        font-weight: 700;
+        color: #e0f2fe;
+        letter-spacing: 0.02em;
+      }
+
+      .tunnel-url-row {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .tunnel-url-box {
+        flex: 1;
+        min-width: 0;
+        border-radius: 10px;
+        border: 1px solid #3b5998;
+        background: #0a1628;
+        padding: 10px 12px;
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 12px;
+        color: #7dd3fc;
+        word-break: break-all;
+        line-height: 1.35;
+      }
+
+      .tunnel-url-box a {
+        color: #38bdf8;
+        text-decoration: none;
+      }
+
+      .tunnel-url-box a:hover {
+        text-decoration: underline;
+      }
+
+      .tunnel-hint {
+        margin-top: 10px;
+        font-size: 11px;
+        color: #8da4be;
+        line-height: 1.45;
+      }
+
+      .tunnel-state-wait {
+        color: #fcd34d;
+        font-size: 13px;
+      }
+
+      .tunnel-state-off {
+        color: #94a3b8;
+        font-size: 13px;
+      }
+
       #status {
         min-height: 24px;
         font-size: 12px;
@@ -118,6 +188,16 @@
   </head>
   <body>
     <div class="wrap">
+      <div class="card tunnel-card">
+        <h2>Public API (Cloudflare quick tunnel)</h2>
+        <p style="font-size: 12px; color: #9fb0c7">
+          Use this base URL from another machine. It changes when cloudflared restarts.
+        </p>
+        <div id="tunnel-body">
+          <div class="tunnel-state-off">Loading…</div>
+        </div>
+      </div>
+
       <div class="card">
         <h1>Viber Auto Sender</h1>
         <p>One click flow: restart Viber, open chat by phone, and paste message (debug mode).</p>
@@ -143,7 +223,45 @@
       const messageEl = document.getElementById("message");
       const phoneEl = document.getElementById("phone");
       const logsEl = document.getElementById("logs");
+      const tunnelBodyEl = document.getElementById("tunnel-body");
       const seenLogs = new Set();
+
+      function renderTunnel(payload) {
+        const { url, tunnelEnabled } = payload || {};
+        if (!tunnelEnabled) {
+          tunnelBodyEl.innerHTML =
+            '<div class="tunnel-state-off">Quick tunnel is off. Set <code style="color:#cbd5e1">CLOUDFLARE_TUNNEL_ENABLED=true</code> and install <code style="color:#cbd5e1">cloudflared</code>.</div>';
+          return;
+        }
+        if (!url) {
+          tunnelBodyEl.innerHTML =
+            '<div class="tunnel-state-wait">Waiting for Cloudflare to assign a public URL…</div>';
+          return;
+        }
+        const base = url.replace(/\/$/, "");
+        const health = `${base}/health`;
+        const hint = `Example: <code style="color:#a5b4fc">GET ${health}</code> · <code style="color:#a5b4fc">POST ${base}/send</code> with JSON body.`;
+        tunnelBodyEl.innerHTML = `
+          <div class="tunnel-url-row">
+            <div class="tunnel-url-box"><a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a></div>
+            <button type="button" class="btn-muted" id="tunnel-copy" title="Copy base URL">Copy</button>
+          </div>
+          <p class="tunnel-hint">${hint}</p>
+        `;
+        document.getElementById("tunnel-copy").addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(url);
+            const btn = document.getElementById("tunnel-copy");
+            const t = btn.textContent;
+            btn.textContent = "Copied";
+            setTimeout(() => {
+              btn.textContent = t;
+            }, 1600);
+          } catch {
+            window.prompt("Copy this URL:", url);
+          }
+        });
+      }
 
       function setStatus(text, ok = true) {
         statusEl.textContent = text;
@@ -189,6 +307,16 @@
 
       window.viberDesktop.onLog((entry) => {
         appendLog(entry);
+      });
+
+      async function bootstrapTunnel() {
+        const payload = await window.viberDesktop.getPublicTunnelUrl();
+        renderTunnel(payload);
+      }
+
+      bootstrapTunnel();
+      window.viberDesktop.onTunnelUrl((payload) => {
+        renderTunnel(payload);
       });
     </script>
   </body>
